@@ -3,18 +3,28 @@ const router = express.Router();
 const fs = require("fs");
 const bcrypt = require("bcryptjs");
 const session = require("express-session");
+const sqlite3 = require("sqlite3");
+const fileUpload = require("express-fileupload");
 
-// Middleware to read books data from file
-const readBooksFromFile = () => {
-    try {
-        const data = fs.readFileSync("books.txt", "utf8");
-        return JSON.parse(data);
-    } catch (err) {
-        return [];
-    }
-};
+const db = new sqlite3.Database("books.sqlitedb");
 
-// Set up session middleware
+db.serialize();
+
+db.run(`CREATE TABLE IF NOT EXISTS books(
+    "id" INTEGER PRIMARY KEY,
+    "title" TEXT NOT NULL,
+    "author" TEXT,
+    "start" TEXT,
+    "end" TEXT,
+    "description" TEXT,
+    "rating" TEXT,
+    "img" TEXT
+)`);
+
+db.parallelize();
+
+router.use(fileUpload());
+
 router.use(
     session({
         secret: "random string",
@@ -23,15 +33,12 @@ router.use(
     })
 );
 
-// Load user data
 const users = require("./passwd.json");
 
-// Render login form
 router.get("/login", (req, res) => {
     res.render("login", { info: "Please log in to get access to your books" });
 });
 
-// Handle login form submission
 router.post("/login", (req, res) => {
     bcrypt.compare(
         req.body.password,
@@ -49,7 +56,6 @@ router.post("/login", (req, res) => {
     );
 });
 
-// Logout route
 router.post("/logout", (req, res) => {
     console.log("Logout route accessed");
     req.session.destroy((err) => {
@@ -61,46 +67,80 @@ router.post("/logout", (req, res) => {
     });
 });
 
-// Route middleware to check authentication
-router.use((req, res, next) => {
+router.all("*", function (req, res, next) {
     if (!req.session.username) {
         res.redirect("/books/login");
-    } else {
-        next();
+        return;
     }
+    next();
 });
 
-// Render home page with books data
-router.get("/", (req, res) => {
+router.get("/", function (req, res, next) {
     req.session.count++;
-    const filename = req.session.username + ".txt";
-    const books = readBooksFromFile(filename);
-    const info = `User: ${req.session.username} Count: ${
-        req.session.count
-    } ${new Date()}`;
-    res.render("books", { info, books });
+    const s =
+        "User: " +
+        req.session.username +
+        " Count: " +
+        req.session.count +
+        " " +
+        new Date();
+    db.all("SELECT * FROM books ", function (err, rows) {
+        if (err) throw err;
+        res.render("books", { info: s, rows: rows });
+    });
 });
 
-// Handle form submission for adding or deleting a book
-router.post("/", (req, res) => {
-    const { action, ...bookData } = req.body; // Extract action and book data from request
-    let books = readBooksFromFile();
-
-    if (action === "add") {
-        books.push(bookData); // Add new book to array
-    } else if (action === "delete") {
-        const bookIndex = books.findIndex(
-            (book) => book.title === bookData.bookName
-        ); // Find index of book to delete
-        if (bookIndex !== -1) {
-            books.splice(bookIndex, 1); // Remove book from array
-        }
+router.post("/upload", (req, res) => {
+    if (
+        !req.body.title ||
+        !req.body.author ||
+        !req.body.start ||
+        !req.body.end ||
+        !req.body.description ||
+        !req.body.rating
+    ) {
+        // Redirect back to the form with an error message
+        res.redirect("/books/?error=Please fill in all fields");
+        return;
     }
 
-    // Write updated book data to file
-    fs.writeFile("books.txt", JSON.stringify(books), (err) => {
+    let img = "";
+    if (req.files && req.files.img) {
+        img = "/images/" + req.files.img.name;
+        req.files.img.mv("./public" + img, (err) => {
+            if (err) throw err;
+            insertBook(req, res, img);
+        });
+    } else {
+        insertBook(req, res, img);
+    }
+});
+
+function insertBook(req, res, img) {
+    db.run(
+        `INSERT INTO books("title", "author", "start", "end", "description", "rating", "img")
+        VALUES (?, ?, ?, ?, ?, ?, ?);`,
+        [
+            req.body.title,
+            req.body.author,
+            req.body.start,
+            req.body.end,
+            req.body.description,
+            req.body.rating,
+            img,
+        ],
+        (err) => {
+            if (err) throw err;
+            // Emit event when a new book is added
+            io.emit("newBookAdded", { title: req.body.title });
+            res.redirect("/books/");
+        }
+    );
+}
+
+router.post("/delete", (req, res) => {
+    db.run("DELETE FROM books WHERE id = ?", req.body.id, (err) => {
         if (err) throw err;
-        console.log("Book data has been saved!");
         res.redirect("/books/");
     });
 });
