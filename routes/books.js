@@ -28,7 +28,7 @@ const users = require("./passwd.json");
 
 // Render login form
 router.get("/login", (req, res) => {
-    res.render("login", { info: "PLEASE LOGIN" });
+    res.render("login", { info: "Please log in to get access to your books" });
 });
 
 // Handle login form submission
@@ -50,9 +50,15 @@ router.post("/login", (req, res) => {
 });
 
 // Logout route
-router.get("/logout", (req, res) => {
-    req.session.destroy();
-    res.redirect("/books/");
+router.post("/logout", (req, res) => {
+    console.log("Logout route accessed");
+    req.session.destroy((err) => {
+        if (err) {
+            console.error("Error destroying session:", err);
+        } else {
+            res.redirect("/books/login");
+        }
+    });
 });
 
 // Route middleware to check authentication
