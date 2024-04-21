@@ -131,8 +131,6 @@ function insertBook(req, res, img) {
         ],
         (err) => {
             if (err) throw err;
-            // Emit event when a new book is added
-            io.emit("newBookAdded", { title: req.body.title });
             res.redirect("/books/");
         }
     );
